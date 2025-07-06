@@ -21,19 +21,13 @@ cohere_api_key = '1msKL9N3DxmNqmxMCQLQ4CHz8e1dO130v1urBoUI'
 st.set_page_config(page_title="Chatbot Científico", layout="centered")
 
 # ---------------- RUTA FFMPEG ----------------
-# ffmpeg_path = r"C:\ffmpeg\bin\ffmpeg.exe"
-# if os.path.isfile(ffmpeg_path):
-#     def patched_run(cmd, **kwargs):
-#         if cmd[0] == "ffmpeg":
-#             cmd[0] = ffmpeg_path
-#         return subprocess.run(cmd, **kwargs)
-#     whisper.audio.run = patched_run
-
-# ---------------- RUTA FFMPEG UNIVERSAL ----------------
-def patched_run(cmd, **kwargs):
-    return subprocess.run(cmd, **kwargs)
-
-whisper.audio.run = patched_run  # Se usa ffmpeg del sistema
+ffmpeg_path = r"C:\ffmpeg\bin\ffmpeg.exe"
+if os.path.isfile(ffmpeg_path):
+    def patched_run(cmd, **kwargs):
+        if cmd[0] == "ffmpeg":
+            cmd[0] = ffmpeg_path
+        return subprocess.run(cmd, **kwargs)
+    whisper.audio.run = patched_run
 
 # ---------------- FONDO ----------------
 def set_background(image_file):

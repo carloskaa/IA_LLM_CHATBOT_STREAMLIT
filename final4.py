@@ -17,16 +17,13 @@ from langchain_community.document_loaders import PyPDFLoader
 cohere_api_key = '1msKL9N3DxmNqmxMCQLQ4CHz8e1dO130v1urBoUI'
 st.set_page_config(page_title="Chatbot Científico", layout="centered")
 
-# ---------------- RUTA MANUAL A FFMPEG ----------------
-ffmpeg_path = r"C:\ffmpeg\bin\ffmpeg.exe"
-if os.path.isfile(ffmpeg_path):
-    def patched_run(cmd, **kwargs):
-        if cmd[0] == "ffmpeg":
-            cmd[0] = ffmpeg_path
-        return subprocess.run(cmd, **kwargs)
-    whisper.audio.run = patched_run
+# ---------------- RUTA FFMPEG UNIVERSAL ----------------
+def patched_run(cmd, **kwargs):
+    return subprocess.run(cmd, **kwargs)
 
-# ---------------- FONDO Y ESTILO ----------------
+whisper.audio.run = patched_run  # Se usa ffmpeg del sistema
+
+# ---------------- FONDO ----------------
 def set_background(image_file):
     with open(image_file, "rb") as f:
         data = f.read()
@@ -59,22 +56,6 @@ def set_background(image_file):
             padding: 0.5rem 1rem;
             border: 1px solid #555;
         }}
-        section[data-testid="stFileUploader"] > div {{
-            background-color: #1b1f2a !important;
-            border: 1px solid #444;
-            border-radius: 8px;
-            padding: 0.5rem;
-            color: white !important;
-            max-width: 300px;
-        }}
-        section[data-testid="stFileUploader"] button {{
-            background-color: #000 !important;
-            color: white !important;
-            border-radius: 6px;
-            border: 1px solid #888;
-            padding: 0.25rem 0.75rem;
-            font-size: 0.8rem;
-        }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -85,12 +66,14 @@ st.markdown("<h1 style='text-align: center; color: #A1F55A;'>Chatbot <span style
 with open("logo2.jpeg", "rb") as image_file:
     logo2_encoded = base64.b64encode(image_file.read()).decode()
 st.markdown(f"<div style='text-align: center;'><img src='data:image/png;base64,{logo2_encoded}' width='100'/></div>", unsafe_allow_html=True)
+
 st.markdown("""
 <p style='color: white; text-align: center; font-size: 16px;'>
 Bienvenido, <strong>Scientia</strong> es un chatbot diseñado para responder tus preguntas sobre el radar de la IA y temas afines. Fórmula tu pregunta abajo.
 </p>
 """, unsafe_allow_html=True)
-# ---------------- CARGA DE DOCUMENTOS ----------------
+
+# ---------------- CARGA DOCUMENTOS ----------------
 @st.cache_resource
 def load_documents():
     loader = PyPDFLoader("Guión_HMI.pdf")
@@ -98,7 +81,6 @@ def load_documents():
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=0)
     return text_splitter.split_documents(docs)
 
-# ---------------- QA CHAIN ----------------
 @st.cache_resource
 def setup_qa_chain():
     texts = load_documents()
@@ -107,7 +89,7 @@ def setup_qa_chain():
 
     prompt_template = """
     ## Instructions
-    You are an AI personal friendly assistant named Scientia, designed to answer questions about the radar of the IA.
+    You are an AI personal friendly assistant named Scientia, designed to answer questions about el radar de la IA.
     You MUST only support Spanish for questions and answers. Your responses should be concise and directly address the specific question.
     Answer based solely on the content of the provided documents. Do not generate an answer that is not supported by the documents.
     If you cannot find the answer to the user's question in the documents provided, respond by stating that the information is beyond your scope.
@@ -140,43 +122,47 @@ qa_chain = setup_qa_chain()
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# ---------------- INPUT TEXTO ----------------
-user_input = st.text_input("✍️ Escribe tu pregunta", key="input")
+# ---------------- FUNCIONES DE AUDIO ----------------
+def transcribe_audio(audio_path):
+    model = whisper.load_model("base")
+    result = model.transcribe(audio_path, language="Spanish")
+    return result["text"]
 
-# ---------------- INPUT AUDIO ----------------
-st.markdown("🎙️ <strong>Subir nota de voz</strong>", unsafe_allow_html=True)
-audio_file = st.file_uploader("", type=["m4a", "mp3", "wav"], label_visibility="collapsed")
+# ---------------- ENTRADAS ----------------
+user_input = st.text_input("✍️ Escribe tu pregunta:", key="text_input")
 
-# ---------------- PROCESAMIENTO DE AUDIO ----------------
-transcribed_text = None
-if audio_file:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".m4a") as tmp_file:
-        tmp_file.write(audio_file.read())
-        tmp_path = tmp_file.name
+col1, col2 = st.columns(2)
 
-    with st.spinner("🎧 Transcribiendo..."):
-        try:
-            model = whisper.load_model("base")
-            result = model.transcribe(tmp_path, language="Spanish")
-            transcribed_text = result["text"]
-           
-            # LLAMAR AUTOMÁTICAMENTE AL LLM CON EL AUDIO
+with col1:
+    if st.button("Enviar pregunta escrita") and user_input:
+        with st.spinner("🤖 Pensando..."):
+            result = qa_chain.invoke({"query": user_input})
+            st.session_state.chat_history.append(("Tú", user_input))
+            st.session_state.chat_history.append(("Scientia", result["result"]))
+
+with col2:
+    audio_file = st.file_uploader("🎙️ Sube un archivo de audio (WAV, MP3, M4A)", type=["wav", "mp3", "m4a"])
+    if audio_file is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(audio_file.read())
+            tmp_path = tmp.name
+
+        st.audio(tmp_path)
+        with st.spinner("🎧 Transcribiendo grabación..."):
+            transcription = transcribe_audio(tmp_path)
+            st.success("✅ Transcripción completada")
+            st.markdown(f"<p style='color: white;'>📝 {transcription}</p>", unsafe_allow_html=True)
+            final_input = transcription
+            os.remove(tmp_path)
+
+        if final_input:
             with st.spinner("🤖 Pensando..."):
-                result = qa_chain.invoke({"query": transcribed_text})
-                st.session_state.chat_history.append(("Tú", transcribed_text))
+                result = qa_chain.invoke({"query": final_input})
+                st.session_state.chat_history.append(("Tú", final_input))
                 st.session_state.chat_history.append(("Scientia", result["result"]))
-        except Exception as e:
-            st.error(f"❌ Error al transcribir: {e}")
 
-# ---------------- BOTÓN ENVIAR TEXTO ----------------
-if st.button("Enviar") and user_input.strip():
-    with st.spinner("🤖 Pensando..."):
-        result = qa_chain.invoke({"query": user_input})
-        st.session_state.chat_history.append(("Tú", user_input))
-        st.session_state.chat_history.append(("Scientia", result["result"]))
-
-# ---------------- HISTORIAL ----------------
-# for speaker, text in st.session_state.chat_history:
+# ---------------- HISTORIAL RECIENTE PRIMERO ----------------
+st.markdown("---")
 for speaker, text in reversed(st.session_state.chat_history):
     icon = "🧑" if speaker == "Tú" else "🤖"
     st.markdown(f"<p style='color: white;'><strong>{icon} {speaker}:</strong> {text}</p>", unsafe_allow_html=True)
